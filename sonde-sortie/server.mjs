@@ -50,7 +50,8 @@ function dnsBrut(serveur) {
     s.once("message", (m) => {
       clearTimeout(minuteur);
       s.close();
-      ok({ issue: "joint", octets: m.length, ms: Date.now() - t0 });
+      // rcode et nombre de réponses : distingue REFUSED (5), SERVFAIL (2) et une vraie réponse.
+      ok({ issue: "joint", octets: m.length, rcode: m.length > 3 ? m[3] & 0x0f : null, reponses: m.length > 7 ? m.readUInt16BE(6) : null, ms: Date.now() - t0 });
     });
     s.once("error", (e) => {
       clearTimeout(minuteur);
@@ -91,7 +92,7 @@ async function essais() {
   // le résolveur du projet refuse (sortie fermée), pour que le refus mesuré soit celui du réseau.
   // EN PARALLÈLE : une sortie filtrée JETTE les paquets (aucun refus immédiat), chaque essai
   // attend donc son délai de 4 s ; en série, la réponse dépassait le délai de l'edge (19/10).
-  const [declare, nonDeclare, smtp, local, meta, g8, c1] = await Promise.all([
+  const [declare, nonDeclare, smtp, local, meta, g8, c1, dg] = await Promise.all([
     resoudre("example.com"),
     resoudre("wikipedia.org"),
     resoudre("gmail-smtp-in.l.google.com"),
@@ -99,6 +100,7 @@ async function essais() {
     resoudre("metadata.google.internal"),
     dnsBrut("8.8.8.8"),
     dnsBrut("1.1.1.1"),
+    gw ? dnsBrut(gw) : null,
   ]);
   const ipDeclare = declare.adresses?.[0] ?? "104.20.23.154";
   const ipNonDeclare = nonDeclare.adresses?.[0] ?? "185.15.58.224";
@@ -118,6 +120,8 @@ async function essais() {
     autreResolveur: {
       "8.8.8.8 udp/53": g8,
       "1.1.1.1 udp/53": c1,
+      // LE RÉSOLVEUR DU PROJET INTERROGÉ EN DIRECT, sans le résolveur intégré du démon (127.0.0.11).
+      ...(dg ? { [`passerelle ${gw} udp/53 (résolveur du projet)`]: dg } : {}),
     },
   };
   const cibles = [
