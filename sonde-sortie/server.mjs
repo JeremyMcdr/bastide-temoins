@@ -89,9 +89,17 @@ async function essais() {
   const gw = await passerelle();
   // Les adresses littérales sont celles que le nuage résolvait le 17/10/2026 : elles servent quand
   // le résolveur du projet refuse (sortie fermée), pour que le refus mesuré soit celui du réseau.
-  const declare = await resoudre("example.com");
-  const nonDeclare = await resoudre("wikipedia.org");
-  const smtp = await resoudre("gmail-smtp-in.l.google.com");
+  // EN PARALLÈLE : une sortie filtrée JETTE les paquets (aucun refus immédiat), chaque essai
+  // attend donc son délai de 4 s ; en série, la réponse dépassait le délai de l'edge (19/10).
+  const [declare, nonDeclare, smtp, local, meta, g8, c1] = await Promise.all([
+    resoudre("example.com"),
+    resoudre("wikipedia.org"),
+    resoudre("gmail-smtp-in.l.google.com"),
+    resoudre("localhost.bastide.internal"),
+    resoudre("metadata.google.internal"),
+    dnsBrut("8.8.8.8"),
+    dnsBrut("1.1.1.1"),
+  ]);
   const ipDeclare = declare.adresses?.[0] ?? "104.20.23.154";
   const ipNonDeclare = nonDeclare.adresses?.[0] ?? "185.15.58.224";
   const ipSmtp = smtp.adresses?.[0] ?? "74.125.69.26";
@@ -103,13 +111,13 @@ async function essais() {
       "example.com (déclaré)": declare,
       "wikipedia.org (non déclaré)": nonDeclare,
       "gmail-smtp-in.l.google.com": smtp,
-      "localhost.bastide.internal": await resoudre("localhost.bastide.internal"),
-      "metadata.google.internal": await resoudre("metadata.google.internal"),
+      "localhost.bastide.internal": local,
+      "metadata.google.internal": meta,
     },
     tcp: {},
     autreResolveur: {
-      "8.8.8.8 udp/53": await dnsBrut("8.8.8.8"),
-      "1.1.1.1 udp/53": await dnsBrut("1.1.1.1"),
+      "8.8.8.8 udp/53": g8,
+      "1.1.1.1 udp/53": c1,
     },
   };
   const cibles = [
@@ -127,7 +135,8 @@ async function essais() {
     ["127.0.0.1:4100 (bouclage)", "127.0.0.1", 4100],
   ];
   if (gw) cibles.push([`passerelle ${gw}:22 (hôte)`, gw, 22], [`passerelle ${gw}:4100 (hôte)`, gw, 4100]);
-  for (const [nom, h, p] of cibles) r.tcp[nom] = await tcp(h, p);
+  const issues = await Promise.all(cibles.map(([, h, p]) => tcp(h, p)));
+  cibles.forEach(([nom], i) => (r.tcp[nom] = issues[i]));
   return r;
 }
 
